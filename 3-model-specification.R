@@ -232,11 +232,39 @@ tic("GAM estimation")
   gam.form <- as.formula(paste(dependent_variable, 
                                paste(c(categorical_variables, 
                                        map_chr(numeric_variables_sum, 
-                                               function(x) paste0("s(", x, ", k = 5)"))), 
+                                               function(x) paste0("s(", x, ")"))), 
                                      collapse = "+"), sep = "~"))
   gam <- mgcv::gam(gam.form, family = gaussian(), data = df.nyc)
 toc()
-options(max.print = 100) ; summary(gam)
+options(max.print = 100) ; summary(gam) ; mgcv::gam.check(gam) ; plot(gam)
+
+# Specify the inverse Box-Cox transformation
+bcUntransform <- function(yt, lambda = bc$lambda) {
+  if (lambda == 0) {
+    return(exp(y))
+  } else {
+    return(exp(log(lambda * yt + 1) / lambda))
+  }
+}
+
+# Calculate mean absolute percentage error using GAM
+ape.gam <- abs(bcUntransform(predict(gam, df.nyc)) - df.nyc$price_m2) / df.nyc$price_m2
+mape.gam <- mean(ape.gam) ; mape.gam ; median(ape.gam)
+plot(ape.gam)
+
+# Calculate mean absolute percentage error using OLS
+ape.ols <- abs(bcUntransform(predict(ols, df.nyc)) - df.nyc$price_m2) / df.nyc$price_m2
+mape.ols <- mean(ape.ols) ; mape.ols ; median(ape.ols)
+plot(ape.ols, pch = 19, cex = 0.5, col = rgb(0,0,0,0.1), ylim = c(0, 1))
+
+# Calculate the locational price
+locational_variables <- c("d_highschool", "d_cinema", "d_airport", "d_fitness", 
+                          "d_playground", "d_railway", "d_shopping", "d_exhange",
+                          "d_highway", "d_mainroad", "d_waterfront", "a_park", 
+                          "d_subway", "sum_n_rcb", "d_supermarket")
+df.location <- df.nyc %>% mutate_at(vars(setdiff(names(.), c(locational_variables, 
+                                                             categorical_variables))), ~ 0)
+loc_var <- bcUntransform(predict(ols, df.location)) / bcUntransform(predict(ols, df.nyc))
 
 # Plot the density of residuals
 plot(density(ols$residuals), pch = 19, cex = 0.5, main = "OLS Residuals")

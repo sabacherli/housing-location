@@ -17,9 +17,10 @@ ipack <- function(pack) {
 # Specifcy packages and install and load them
 # [loaded in reverse order, meaning functions from early packages may be masked by functions from latter packages]
 packages <- c("pryr", "tictoc",  # profiling
-              "smoothr", "pastecs", "Rfast", "data.table",  # miscellaneous
+              "smoothr", "pastecs", "Rfast", "data.table", "magrittr", "OutlierDetection",  # miscellaneous
+              "dendextend",
               "osmdata", "rgdal", "tmap", "sf", "tidyverse")  # fundamentals
-ipack(packages)
+ipack(packages) ; rm(ipack, packages)
 
 mem_used()
 
@@ -108,16 +109,19 @@ df6 %>%
   arrange(desc(n)) %>% 
   View("Building Types")
 
-# Create overarching building categories and filter out garages
-df7 <- df6 %>% 
-  mutate(building_class = as.factor(substr(building_code, 0, 1))) %>% 
-  filter(building_class != "G")
+# Filter out building tpyes with a sample size smaller than 120 (giving 4 overarching categories instead 5)
+building_codes <- df6 %>% 
+  group_by(building_code) %>% 
+  count(building_type) %>% 
+  filter(n > 120) %>% 
+  select(building_code) %>% 
+  t() %>% 
+  as.vector()
 
-# Check number of buildings with multiple apartments
-df7 %>% 
-  count(residential) %>% 
-  arrange(desc(n)) %>%
-  View("Number of buildings")
+# Create overarching building categories
+df7 <- df6 %>% 
+  filter(building_code %in% building_codes) %>% 
+  mutate(building_class = as.factor(substr(building_code, 0, 1))) ; rm(building_codes)
 
 # Check for observations where number of residential units still doesn't match the total units
 df7 %>% 
@@ -135,8 +139,8 @@ df8 <- df7 %>%
          price_unit = price / units)
 
 # Check if the price distribution makes sense
-summary(df8$price_m2)
-pdf("plot-prices-before.pdf") 
+summary(df8$price_m2)  # min price of 0 indicates measurement errors
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-prices-before.pdf") 
 plot(density(df8$price_m2, bw = "sj"), main = "Price per square metre")  # plot empirical probability density function with sj smoothing bandwidth
 
 # Filter out observations before the first local minimum deemed to be private transactions aimed at reducing property taxes
@@ -149,19 +153,105 @@ df9 <- df8 %>%
   filter(price_m2 > d$x[tp$tppos][1])
 
 # Check price distribution again
-summary(df9$price_m2)
-pdf("plot-prices-after.pdf")
-plot(density(df9$price_m2, bw = "sj"), main = "Price per square metre")
+summary(df9$price_m2)  # min price is acceptable
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-prices-after.pdf")
+  plot(density(df9$price_m2, bw = "sj"), main = "Price per square metre")
 dev.off()
+
+# Check number of observations per building class and their mean price per sqm
+df9 %>% 
+  group_by(building_code) %>% 
+  summarise(n = n(),
+            mean.price_m2 = mean(price_m2)) %>% 
+  arrange(desc(mean.price_m2)) %>%
+  View("Number of buildings")
 
 # Check if the most expensive properties are reasonable
 df9 %>% 
   top_n(25, price_m2) %>% 
   arrange(desc(price_m2)) %>% 
-  View("Expensive properties")
+  View("Expensive properties")  # data seems reasonable for the location, but are subject to a submarket
+
+# Remove large data frames so group_by() won't crash the rsession
+rm(list = setdiff(ls(), "df9"))
+
+# Classify outliears that are subject to their own submarket (~70sec)
+
+# Automatically (~60sec)
+tic("Outliers: ")
+  outliers <- UnivariateOutlierDetection(df9$price_m2)
+  outliers$`Scatter plot`
+  cut.outlier <- outliers$`Outlier Observations` %>% min() ; cut.outlier
+toc()
+
+# k-nearest neighbours with complete linkage algorithm (~32min)
+tic("Average linkage: ")
+  d <- dist(df9$price_m2)
+  hc <- hclust(d, method = "average")
+  hcd <- as.dendrogram(hc)
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-dendrogram.pdf")
+    hcd %>% set("clear_leaves") %>% 
+      set("branches_k_color", k = 12) %>% 
+      cut(h = 100) %>% 
+      extract2(1) %>% 
+      plot(leaflab = "none", main = "Dendrogram", xlab = "Clusters", ylab = "Price per sqm")  # determine how many clusters are best
+  dev.off()
+  tree <- cutree(hc, k = 12)
+  df.knn <- cbind(df9$price_m2, tree) %>% 
+    set_colnames(c("price_m2", "cluster")) %>% 
+    as.data.frame() %>%
+    arrange(price_m2)
+toc()
+rm(d, hc, hcd, tree)
+df.knn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% arrange(mean)  # check which number got assiged to which cluster
+cut.knn <- df.knn %>% 
+  filter(cluster %in% c(1, 2)) %>%  # filter out the first three submarkets
+  max() ; cut.knn
+
+
+# k-means clustering (~2sec)
+tic("k-means: ")
+  km <- kmeans(df9$price_m2, 7)
+  df.km <- cbind(df9$price_m2, km$cluster) %>% 
+    set_colnames(c("price_m2", "cluster")) %>% 
+    as.data.frame() %>%
+    arrange(price_m2)
+toc()
+df.km %>% group_by(cluster) %>% summarise(mean = mean(price_m2)) %>% arrange(mean)  # check which number got assigned to which cluster
+cut.kmeans <- df.km %>% 
+  filter(cluster %in% c(5,4,6,1)) %>%  # filter out the first three submarkets (cluster numbers randomly assigned - requires manaul selection)
+  max() ; cut.kmeans
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-kmeans-clustering.pdf")
+  plot(df9$price_m2, pch = 19, col = km$cluster, ylab = "Price per sqm", main = "K-means clustering")
+  plot(df.km$price_m2, pch = 19, col = df.km$cluster, ylab = "Price per sqm", main = "K-means clustering")
+  abline(h = cut.kmeans, col = "red")
+dev.off()
+
+# z-score
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-zscore-outliers.pdf")
+  plot(sort(scale(df9$price_m2)), ylab = "z-value", main = "z-Score outlier detection")
+  mu <- mean(df9$price_m2) ; sigma <- sd(df9$price_m2)
+  abline(h = (cut.kmeans - mu) / sigma, col = "red")
+dev.off()
+print(paste("z-value at cut-off:", round((cut.kmeans - mu) / sigma, 4)))  # cut off at 2x standard deviation
+
+# Visual inspection
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-graphical-outlier-detection.pdf")
+  boxplot(df9$price_m2, main = "Box plot (price per sqm)")  # extreme outliers upwards
+  abline(h = cut.kmeans, col = "red")
+  hist(df9$price_m2, 
+       breaks = seq(min(df9$price_m2), max(df9$price_m2), length.out = 1000),
+       xlab = "Price per sqm",
+       main = "Histogram (price per sqm)",
+       col = "black")
+  abline(v = cut.kmeans, col = "red")
+  barplot(sort(df9$price_m2), main = "Barplot (Price per sqm, sorted)", ylab = "USD", xlab = "Price per sqm")
+  abline(h = cut.kmeans, col = "red")
+dev.off()
 
 # Create an sf object and change to a equidistant projection with metres as units
 sf.nyc <- df9 %>% 
+  filter(price_m2 < cut.kmeans) %>% 
   st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
   st_transform(32118)
 
@@ -174,7 +264,7 @@ sf.boroughs <- st_as_sf(readOGR(dsn = "/Users/samu_hugo/Desktop/Code/Data/boroug
 # Check the spatial distribution of the prices (~25sec)
 tic("Mapping")
   tmap_mode("plot")
-  pdf("map-prices.pdf")
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/map-prices.pdf")
   tm_shape(sf.boroughs) + 
     tm_polygons(alpha = 0.1, border.alpha = 0.4) +
     tm_layout(title = "2018 Property Prices, NYC", title.position = c("left", "top"),
@@ -187,6 +277,7 @@ tic("Mapping")
                                      begin = 0.1, 
                                      end = 0.9, 
                                      direction = -1))
+  dev.off()
 toc()
 
 # Clean up environment
@@ -268,7 +359,7 @@ toc()
 
 # Plot high schools only
 tmap_mode("plot")
-pdf("map-highschools.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-high-schools.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "High schools, NYC", title.position = c("left", "top"),
@@ -283,9 +374,10 @@ tm_shape(sf.boroughs) +
                                    direction = -1)) +
   tm_shape(sf.school_quality) + 
   tm_dots(size = 0.1, col = "blue")
-dev.off
+dev.off()
+
 # Plotting elementary schools only
-pdf("map-elementary.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-elementary-schools.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) + 
   tm_layout(title = "Elementary schools, NYC", title.position = c("left", "top"),
@@ -319,7 +411,7 @@ sf.nyc$n_crime <- st_contains(sf.nyc_800, sf.crime) %>%
 
 # Plot shootings
 tmap_mode("plot")
-pdf("map-shootings.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-shootings.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Shootings, NYC", title.position = c("left", "top"),
@@ -358,7 +450,7 @@ sf.nyc$d_subway_unit <- "100m"
 
 # Plot subway stations
 tmap_mode("plot")
-pdf("map-subway.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-subway.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Subway stations, NYC", title.position = c("left", "top"),
@@ -396,7 +488,7 @@ sf.nyc$n_noise <- st_contains(sf.nyc_400, sf.noise) %>%
 
 # Plot noise complaints
 tmap_mode("plot")
-pdf("map-noise.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-noise.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Noise complaints, NYC", title.position = c("left", "top"),
@@ -434,7 +526,7 @@ sf.nyc$borough <- case_when(sf.nyc$id %in% l.boroughs[[1]] ~ sf.boroughs$boro_na
 
 # Check that observations were assigned property
 tmap_mode("plot")
-pdf("map-boroughs.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-boroughs.pdf")
 tm_shape(sf.boroughs) +
   tm_polygons(alpha = 0.1, border.alpha = 0.4, border.col = "black") +
   tm_shape(sf.nyc) +
@@ -490,7 +582,7 @@ sf.nyc$n_restaurants <- st_contains(sf.nyc_400, sf.restaurants) %>%
 
 # Plot restaurants
 tmap_mode("plot")
-pdf("map-restaurants.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-restaurants.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Restaurants, NYC", title.position = c("left", "top"),
@@ -541,7 +633,7 @@ sf.nyc$n_cafes <- st_contains(sf.nyc_400, sf.cafes) %>%
 
 # Plot cafes
 tmap_mode("plot")
-pdf("map-cafes.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-cafes.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Cafes, NYC", title.position = c("left", "top"),
@@ -592,7 +684,7 @@ sf.nyc$n_bars <- st_contains(sf.nyc_400, sf.bars) %>%
 
 # Plot bars
 tmap_mode("plot")
-pdf("map-bars.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-bars.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Bars, NYC", title.position = c("left", "top"),
@@ -605,7 +697,7 @@ tm_shape(sf.boroughs) +
                                    begin = 0.1, 
                                    end = 0.9, 
                                    direction = -1)) +
-  tm_shape(sf.bar) +
+  tm_shape(sf.bars) +
   tm_dots(size = 0.04, col = "blue", alpha = 1)
 dev.off()
 
@@ -629,7 +721,7 @@ sf.nyc$d_cinema_unit <- "100m"
 
 # Plot cinemas
 tmap_mode("plot")
-pdf("map-cinemas.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-cinemas.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Cinemas, NYC", title.position = c("left", "top"),
@@ -666,7 +758,7 @@ sf.nyc$d_airport_unit <- "100m"
 
 # Plot airports
 tmap_mode("plot")
-pdf("map-airports.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-airports.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Airports, NYC", title.position = c("left", "top"),
@@ -709,7 +801,7 @@ sf.nyc$d_fitness_unit <- "100m"
 
 # Plot fitness centres
 tmap_mode("plot")
-pdf("map-fitness.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-fitness.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Fitness centres, NYC", title.position = c("left", "top"),
@@ -748,7 +840,7 @@ sf.parks_10 <- st_combine(st_intersection(sf.nyc_2000_10, sf.parks3))
 
 # Plot park areas
 tmap_mode("plot")
-pdf("map-parks.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-parks.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Park areas, NYC", title.position = c("left", "top"),
@@ -823,7 +915,7 @@ sf.nyc$d_playground_unit <- "100m"
 
 # Plot playgrounds
 tmap_mode("plot")
-pdf("map-playgrounds.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-playgrounds.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Playgrounds, NYC", title.position = c("left", "top"),
@@ -869,7 +961,7 @@ sf.nyc$d_railway_unit <- "100m"
 
 # Plot railways
 tmap_mode("plot")
-pdf("map-railways.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-railways.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Railways, NYC", title.position = c("left", "top"),
@@ -926,7 +1018,7 @@ sf.nyc$d_shopping_unit <- "100m"
 
 # Plot shopping centres
 tmap_mode("plot")
-pdf("map-shopping.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-shopping.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Shopping centres, NYC", title.position = c("left", "top"),
@@ -1006,7 +1098,7 @@ sf.nyc$d_convenience_unit <- "100m"
 
 # Plot grocery stores
 tmap_mode("plot")
-pdf("map-grocery-stores.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-grocery-stores.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Grocery stores, NYC", title.position = c("left", "top"),
@@ -1042,7 +1134,7 @@ sf.nyc$d_exchange_unit <- "100m"
 
 # Plot stock exchange
 tmap_mode("plot")
-pdf("map-exchange.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-exchange.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Stock Exchange, NYC", title.position = c("left", "top"),
@@ -1120,7 +1212,7 @@ sf.nyc$d_mainroad_unit <- "100m"
 
 # Plot roads
 tmap_mode("plot")
-pdf("map-roads.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-roads.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Highways, NYC", title.position = c("left", "top"),
@@ -1164,7 +1256,7 @@ sf.nyc$d_waterfront_unit <- "100m"
 
 # Plot waterfront acces
 tmap_mode("plot")
-pdf("map-waterfront.pdf")
+pdf("/Users/samu_hugo/Desktop/Code/Plots/map-waterfront.pdf")
 tm_shape(sf.boroughs) + 
   tm_polygons(alpha = 0.1, border.alpha = 0.4) +
   tm_layout(title = "Waterfront access, NYC", title.position = c("left", "top"),

@@ -19,7 +19,7 @@ ipack <- function(pack) {
 packages <- c("pryr",  # profiling & testing
               "MASS",  # miscellaneous
               "spdep", "dplyr")  # fundamentals
-ipack(packages)
+ipack(packages) ; rm(ipack, packages)
 
 mem_used()
 

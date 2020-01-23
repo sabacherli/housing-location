@@ -19,7 +19,7 @@ ipack <- function(pack) {
 packages <- c("tictoc", "pryr",  # profiling
               "MASS", "nngeo", # miscellaneous
               "rgdal", "spdep", "tmap", "sf", "dplyr")  # fundamentals
-ipack(packages)
+ipack(packages) ; rm(ipack, packages)
 
 mem_used()
 
@@ -59,13 +59,6 @@ tm_shape(sf.boroughs) +
                                    end = 0.9, 
                                    direction = -1))
 
-# Creating an knn weights matrix (~25sec)
-tic("knn 20 Weights matrix")
-  knn20 <- knearneigh(sf.nyc, 20)
-  knn20.nb <- knn2nb(knn20)
-  knn20.listw <- nb2listw(knn20.nb, style = "W")
-toc()
-
 # Calculating distances up to a threshold (~42sec)
 tic("Calculating distances up to a threshold")
   dnn <- dnearneigh(sf.nyc, 0, round(threshold, 0))
@@ -75,13 +68,42 @@ toc()
 # Creating an inverse distance matrix (~24sec)
 tic("Inverse distance matrix")
   id.list <- lapply(dlist, function(x) 1/x)
-  id.listw <- nb2listw(dnn, glist = id.list, style = "W")
+  id.listw <- nb2listw(dnn, glist = id.list, style = "W") ; id.listw
 toc()
 
 # Creating an exponential distance matrix (~24sec)
 tic("Negative exponential distance matrix")
   exp.list <- lapply(dlist, function(x) exp(-x))
   exp.listw <- nb2listw(dnn, glist = exp.list, style = "W")
+toc()
+
+# Plot a correlogram for k-nearest neighbours (~11min)
+tic("Correlogram")
+  knn7.nb <- knn2nb(knearneigh(sf.nyc, k = 7))  # create nb object with 5 nearest neighbours
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-correlogram.pdf") 
+    plot(sp.correlogram(neighbours = knn7.nb,
+                        var = as.vector(sf.nyc$price_m2),
+                        order = 7,
+                        method = "C",  # for Geary's C
+                        style = "W",
+                        randomisation = T,
+                        zero.policy = T),
+         p.adjust.method = "holm",
+         main = "Correlogram Geary's C - Price per square metre")
+    plot(sp.correlogram(neighbours = knn7.nb,
+                        var = as.vector(sf.nyc$price_m2),
+                        order = 7,
+                        method = "I",  # for Moran's I
+                        style = "W",
+                        randomisation = T,
+                        zero.policy = T),
+         main = "Correlogram Moran's I - Price per square metre")
+  dev.off()
+toc()
+
+# Creating an knn weights matrix (~25sec)
+tic("knn 20 Weights matrix")
+  knn20.listw <- nb2listw(knn20.nb, style = "W")
 toc()
 
 # Kernel weights
@@ -193,20 +215,6 @@ tic("Moran's scatterplot")
        ylim = c(-1, 4))
   abline(h = 0, v = 0, lty = 3)
   abline(lm(sf.stats$price_lagged ~ sf.stats$price_scaled), lty = 3, lwd = 2, col = "green")
-  dev.off()
-toc()
-
-# Plot a correlogram (~11min)
-tic("Correlogram")
-  nb.nyc.stats <- knn2nb(knearneigh(sf.nyc, k = 20))  # create nb object with 20 nearest neighbours
-  pdf("plot-correlogram.pdf") 
-  plot(sp.correlogram(neighbours = nb.nyc.stats,
-                      var = as.vector(sf.nyc$price_m2),
-                      order = 20,
-                      zero.policy = T,
-                      method = "I",  # for moran's I
-                      style = "W"),
-       main = "Correlogram Moran's I - Price per square metre")
   dev.off()
 toc()
 
