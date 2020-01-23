@@ -184,7 +184,7 @@ tic("Outliers: ")
   cut.outlier <- outliers$`Outlier Observations` %>% min() ; cut.outlier
 toc()
 
-# k-nearest neighbours with complete linkage algorithm (~32min)
+# Nearest neighbours with complete linkage algorithm (~32min)
 tic("Average linkage: ")
   d <- dist(df9$price_m2)
   hc <- hclust(d, method = "average")
@@ -197,16 +197,16 @@ tic("Average linkage: ")
       plot(leaflab = "none", main = "Dendrogram", xlab = "Clusters", ylab = "Price per sqm")  # determine how many clusters are best
   dev.off()
   tree <- cutree(hc, k = 12)
-  df.knn <- cbind(df9$price_m2, tree) %>% 
+  df.nn <- cbind(df9$price_m2, tree) %>% 
     set_colnames(c("price_m2", "cluster")) %>% 
     as.data.frame() %>%
     arrange(price_m2)
 toc()
 rm(d, hc, hcd, tree)
-df.knn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% arrange(mean)  # check which number got assiged to which cluster
-cut.knn <- df.knn %>% 
+df.nn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% arrange(mean)  # check which number got assiged to which cluster
+cut.nn <- df.nn %>% 
   filter(cluster %in% c(1, 2)) %>%  # filter out the first three submarkets
-  max() ; cut.knn
+  max() ; cut.nn
 
 
 # k-means clustering (~2sec)
