@@ -17,7 +17,7 @@ ipack <- function(pack) {
 # Specifcy packages and install and load them
 # [loaded in reverse order, meaning functions from early packages may be masked by functions from latter packages]
 packages <- c("tictoc", "pryr",  # profiling
-              "MASS", "nngeo", # miscellaneous
+              "MASS", "nngeo", "purrr", # miscellaneous
               "rgdal", "spdep", "tmap", "sf", "dplyr")  # fundamentals
 ipack(packages) ; rm(ipack, packages)
 
@@ -79,20 +79,19 @@ toc()
 
 # Plot a correlogram for k-nearest neighbours (~11min)
 tic("Correlogram")
-  knn7.nb <- knn2nb(knearneigh(sf.nyc, k = 7))  # create nb object with 5 nearest neighbours
+  knn10.nb <- knn2nb(knearneigh(sf.nyc, k = 10))
   pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-correlogram.pdf") 
-    plot(sp.correlogram(neighbours = knn7.nb,
+    plot(sp.correlogram(neighbours = knn10.nb,
                         var = as.vector(sf.nyc$price_m2),
-                        order = 7,
+                        order = 10,
                         method = "C",  # for Geary's C
                         style = "W",
                         randomisation = T,
                         zero.policy = T),
-         p.adjust.method = "holm",
          main = "Correlogram Geary's C - Price per square metre")
-    plot(sp.correlogram(neighbours = knn7.nb,
+    plot(sp.correlogram(neighbours = knn10.nb,
                         var = as.vector(sf.nyc$price_m2),
-                        order = 7,
+                        order = 10,
                         method = "I",  # for Moran's I
                         style = "W",
                         randomisation = T,
@@ -102,8 +101,9 @@ tic("Correlogram")
 toc()
 
 # Creating an knn weights matrix (~25sec)
-tic("knn 20 Weights matrix")
-  knn20.listw <- nb2listw(knn20.nb, style = "W")
+tic("knn 6 Weights matrix")
+  knn6.nb <- knn2nb(knearneigh(sf.nyc, k = 6))  # create nb object with 5 nearest neighbours
+  knn6.listw <- nb2listw(knn6.nb, style = "W")
 toc()
 
 # Kernel weights
@@ -142,7 +142,7 @@ tic("Global Moran's I")
   ggc.stats <- map(grep('listw$', ls(), value = T), 
               function(x) geary.test(sf.nyc$price_m2, get(x), zero.policy = T))
 toc()
-print(grep('listw$', ls(), value = T)) ; g.mi ; g.gc  # print the weights names and the values
+print(grep('listw$', ls(), value = T)) ; gmi.stats ; ggc.stats  # print the weights names and the values
 
 
 # Check for local spatial autocorrelation (~90sec)
@@ -196,9 +196,9 @@ tic("Local Moan's I")
                   col = c("black", "yellow", "orange", "red"),
                   labels = levels(sf.stats$lmi.significance),
                   title = "Local Moran's I")
-  pdf("map-local-moran.pdf") 
-  tmap_mode("plot")
-  tmap_arrange(p.levels, p.significance)
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/map-local-moran.pdf") 
+    tmap_mode("plot")
+    tmap_arrange(p.levels.stats, p.significance.stats)
   dev.off()
 toc()
 
@@ -206,7 +206,7 @@ toc()
 tic("Moran's scatterplot")
   sf.stats$price_scaled <- scale(sf.stats$price_m2)
   sf.stats$price_lagged <- lag.listw(id.listw, sf.stats$price_scaled)
-  pdf("plot-scatterplot.pdf") 
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-scatterplot.pdf") 
   plot(x = sf.stats$price_scaled, y = sf.stats$price_lagged, main = "Moran Scatterplot", 
        pch = 19, cex = 0.5, col = rgb(0,0,0,0.08),
        xlab = "House prices (scaled)",
@@ -223,7 +223,7 @@ tic("Getis-Ord")
   localGO <- localG(sf.nyc$price_m2, id.listw, zero.policy = T)
   sf.stats$local.go <- localGO
   tmap_mode("plot")
-  pdf("map-getis-ord.pdf") 
+  pdf("/Users/samu_hugo/Desktop/Code/Plots/map-getis-ord.pdf") 
   tm_shape(sf.boroughs) + 
     tm_polygons(alpha = 0.1, border.alpha = 0.4) +
     tm_legend(title.size = 1.2, text.size = 0.8, position = c(0.05, 0.7)) + 

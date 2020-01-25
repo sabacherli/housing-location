@@ -175,8 +175,8 @@ df9 %>%
 # Remove large data frames so group_by() won't crash the rsession
 rm(list = setdiff(ls(), "df9"))
 
-# Classify outliears that are subject to their own submarket (~70sec)
-
+# Classify outliears that are subject to their own submarket
+# ------------------------------------------------------------------------------
 # Automatically (~60sec)
 tic("Outliers: ")
   outliers <- UnivariateOutlierDetection(df9$price_m2)
@@ -184,7 +184,7 @@ tic("Outliers: ")
   cut.outlier <- outliers$`Outlier Observations` %>% min() ; cut.outlier
 toc()
 
-# Nearest neighbours with complete linkage algorithm (~32min)
+# Nearest neighbours with average linkage algorithm (~32min)
 tic("Average linkage: ")
   d <- dist(df9$price_m2)
   hc <- hclust(d, method = "average")
@@ -207,7 +207,6 @@ df.nn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% ar
 cut.nn <- df.nn %>% 
   filter(cluster %in% c(1, 2)) %>%  # filter out the first three submarkets
   max() ; cut.nn
-
 
 # k-means clustering (~2sec)
 tic("k-means: ")
