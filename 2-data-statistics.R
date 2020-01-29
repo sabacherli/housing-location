@@ -21,8 +21,6 @@ packages <- c("tictoc", "pryr",  # profiling
               "rgdal", "spdep", "tmap", "sf", "dplyr")  # fundamentals
 ipack(packages) ; rm(ipack, packages)
 
-mem_used()
-
 # ------------------------------------------------------------------------------
 # SPATIAL WEIGHTS MATRIX
 # ------------------------------------------------------------------------------
@@ -156,7 +154,7 @@ tic("Local Moan's I")
   
   # Add the values to the data.frame and create factor variables indicating significance
   sf.stats <- sf.nyc %>% 
-    select(price_m2) %>% 
+    dplyr::select(price_m2) %>% 
     mutate(lmi.level = price.lmi.stats[, 1],
            lmi.significance = case_when(price.lmi.stats[, 5] < 0.01 ~ "p < 0.01",
                                         price.lmi.stats[, 5] < 0.02 & 

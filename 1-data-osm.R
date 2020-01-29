@@ -17,7 +17,7 @@ ipack <- function(pack) {
 # Specifcy packages and install and load them
 # [loaded in reverse order, meaning functions from early packages may be masked by functions from latter packages]
 packages <- c("pryr", "tictoc",  # profiling
-              "smoothr", "pastecs", "Rfast", "data.table", "magrittr", "OutlierDetection",  # miscellaneous
+              "smoothr", "pastecs", "Rfast", "data.table", "magrittr",  # miscellaneous
               "dendextend",
               "osmdata", "rgdal", "tmap", "sf", "tidyverse")  # fundamentals
 ipack(packages) ; rm(ipack, packages)
@@ -35,7 +35,7 @@ df1 <- fread("/Users/samu_hugo/Desktop/Code/Data/prices.csv") %>%
 
 # Select and rename relevant variables
 df2 <- df1 %>% 
-  select(address = ADDRESS,
+  dplyr::select(address = ADDRESS,
          neighbourhood = NEIGHBORHOOD,
          borough = BOROUGH,
          block = BLOCK,
@@ -71,7 +71,7 @@ df3 <- df2 %>%
 df3 %>% 
   summary()
 
-# Filter out bad data
+# Filter out bad data (e.g. NA's or zero values)
 df4 <- df3 %>% 
   filter(!is.na(long),
          !is.na(lat),
@@ -94,7 +94,7 @@ df.dictionary <- fread("/Users/samu_hugo/Desktop/Code/Data/dictionary.csv") %>%
 df.dictionary <- df.dictionary %>% 
   mutate(building_code = `Building Code`,
          building_type = as.factor(Description)) %>%
-  select(-c(`Building Code`, Description)) %>% 
+  dplyr::select(-c(`Building Code`, Description)) %>% 
   glimpse()
 
 # Joing the description to the building codes
@@ -114,7 +114,7 @@ building_codes <- df6 %>%
   group_by(building_code) %>% 
   count(building_type) %>% 
   filter(n > 120) %>% 
-  select(building_code) %>% 
+  dplyr::select(building_code) %>% 
   t() %>% 
   as.vector()
 
@@ -140,21 +140,19 @@ df8 <- df7 %>%
 
 # Check if the price distribution makes sense
 summary(df8$price_m2)  # min price of 0 indicates measurement errors
-pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-prices-before.pdf") 
-plot(density(df8$price_m2, bw = "sj"), main = "Price per square metre")  # plot empirical probability density function with sj smoothing bandwidth
+pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-low-prices.pdf") 
+  plot(density(df8$price_m2, bw = "sj"), main = "Price per square metre")  # plot empirical probability density function with sj smoothing bandwidth
 
 # Filter out observations before the first local minimum deemed to be private transactions aimed at reducing property taxes
-d <- density(df8$price_m2, bw = "sj")  # calculate the density
-ts_y <- ts(d$y)  # make it a time series
-tp <- turnpoints(ts_y)  # calculate turning points (extrema)
-points(d$x[tp$tppos], d$y[tp$tppos], col = "red")  # plot turning points
-dev.off()
-df9 <- df8 %>% 
-  filter(price_m2 > d$x[tp$tppos][1])
+  d <- density(df8$price_m2, bw = "sj")  # calculate the density
+  ts_y <- ts(d$y)  # make it a time series
+  tp <- turnpoints(ts_y)  # calculate turning points (extrema)
+  points(d$x[tp$tppos], d$y[tp$tppos], col = "red") ; d$x[tp$tppos][1:10]  # plot the turning points and print the first 10
+  df9 <- df8 %>% 
+    filter(price_m2 > d$x[tp$tppos][1])
 
 # Check price distribution again
-summary(df9$price_m2)  # min price is acceptable
-pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-prices-after.pdf")
+  summary(df9$price_m2)  # min price is acceptable
   plot(density(df9$price_m2, bw = "sj"), main = "Price per square metre")
 dev.off()
 
@@ -172,86 +170,86 @@ df9 %>%
   arrange(desc(price_m2)) %>% 
   View("Expensive properties")  # data seems reasonable for the location, but are subject to a submarket
 
-# Remove large data frames so group_by() won't crash the rsession
-rm(list = setdiff(ls(), "df9"))
+# # Remove large data frames so group_by() won't crash the rsession
+# rm(list = setdiff(ls(), "df9"))
+# 
+# # Classify significant positive outliears that are subject to their own submarket
+# # Nearest neighbours with average linkage algorithm (~32min)
+# tic("Average linkage: ")
+#   d <- dist(df9$price_m2)
+#   hc <- hclust(d, method = "average")
+#   hcd <- as.dendrogram(hc)
+#   pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-dendrogram.pdf")
+#     hcd %>% set("clear_leaves") %>% 
+#       set("branches_k_color", k = 12) %>% 
+#       cut(h = 100) %>% 
+#       extract2(1) %>% 
+#       plot(leaflab = "none", main = "Dendrogram", xlab = "Clusters", ylab = "Price per sqm")  # determine how many clusters are best
+#   dev.off()
+#   tree <- cutree(hc, k = 12)
+#   df.nn <- cbind(df9$price_m2, tree) %>% 
+#     set_colnames(c("price_m2", "cluster")) %>% 
+#     as.data.frame() %>%
+#     arrange(price_m2)
+# toc()
+# rm(d, hc, hcd, tree)
+# df.nn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% arrange(mean)  # check which number got assiged to which cluster
+# cut.nn <- df.nn %>% 
+#   filter(cluster %in% c(1, 2)) %>%  # filter out the first three submarkets
+#   max() ; cut.nn
+# 
+# # k-means clustering (~2sec)
+# tic("k-means: ")
+#   km <- kmeans(df9$price_m2, 2)
+#   df.km <- cbind(df9$price_m2, km$cluster) %>% 
+#     set_colnames(c("price_m2", "cluster")) %>% 
+#     as.data.frame() %>%
+#     arrange(price_m2)
+# toc()
+# # df.km %>% group_by(cluster) %>% summarise(mean = mean(price_m2)) %>% arrange(mean)  # check which number got assigned to which cluster
+# cut.kmeans <- df.km %>% 
+#   group_by(cluster) %>% 
+#   mutate(mean = mean(price_m2)) %>% 
+#   filter(mean == min(.$mean)) %>% 
+#   max(); cut.kmeans
+# pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-kmeans-clustering.pdf")
+#   plot(df9$price_m2, pch = 19, col = km$cluster, ylab = "Price per sqm", main = "K-means clustering")
+#   plot(df.km$price_m2, pch = 19, col = df.km$cluster, ylab = "Price per sqm", main = "K-means clustering")
+#   abline(h = cut.kmeans, col = "red")
+# dev.off()
+# 
+# # z-score
+# pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-zscore-outliers.pdf")
+#   plot(sort(scale(df9$price_m2)), ylab = "z-value", main = "z-Score outlier detection", pch = 16)
+#   mu <- mean(df9$price_m2) ; sigma <- sd(df9$price_m2)
+#   abline(h = (cut.kmeans - mu) / sigma, col = "red")
+# dev.off()
+# print(paste("z-value at cut-off:", round((cut.kmeans - mu) / sigma, 4)))  # cut off at 2x standard deviation
+# 
+# # Visual inspection
+# pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-graphical-outlier-detection.pdf")
+#   boxplot(df9$price_m2, main = "Box plot (price per sqm)")  # extreme outliers upwards
+#   abline(h = cut.kmeans, col = "red")
+#   hist(df9$price_m2, 
+#        breaks = seq(min(df9$price_m2), max(df9$price_m2), length.out = 1000),
+#        xlab = "Price per sqm",
+#        main = "Histogram (price per sqm)",
+#        col = "black")
+#   abline(v = cut.kmeans, col = "red")
+#   barplot(sort(df9$price_m2), main = "Barplot (Price per sqm, sorted)", ylab = "USD", xlab = "Price per sqm")
+#   abline(h = cut.kmeans, col = "red")
+# dev.off()
+# 
+# # Create an sf object and change to a equidistant projection with metres as units
+# sf.nyc <- df.km %>% 
+#   group_by(cluster) %>% 
+#   mutate(mean = mean(price_m2)) %>% 
+#   filter(mean == min(.$mean)) %>% 
+#   st_as_sf(coords = c("long", "lat"), crs = 4326) %>%
+#   st_transform(32118)
 
-# Classify outliears that are subject to their own submarket
-# ------------------------------------------------------------------------------
-# Automatically (~60sec)
-tic("Outliers: ")
-  outliers <- UnivariateOutlierDetection(df9$price_m2)
-  outliers$`Scatter plot`
-  cut.outlier <- outliers$`Outlier Observations` %>% min() ; cut.outlier
-toc()
-
-# Nearest neighbours with average linkage algorithm (~32min)
-tic("Average linkage: ")
-  d <- dist(df9$price_m2)
-  hc <- hclust(d, method = "average")
-  hcd <- as.dendrogram(hc)
-  pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-dendrogram.pdf")
-    hcd %>% set("clear_leaves") %>% 
-      set("branches_k_color", k = 12) %>% 
-      cut(h = 100) %>% 
-      extract2(1) %>% 
-      plot(leaflab = "none", main = "Dendrogram", xlab = "Clusters", ylab = "Price per sqm")  # determine how many clusters are best
-  dev.off()
-  tree <- cutree(hc, k = 12)
-  df.nn <- cbind(df9$price_m2, tree) %>% 
-    set_colnames(c("price_m2", "cluster")) %>% 
-    as.data.frame() %>%
-    arrange(price_m2)
-toc()
-rm(d, hc, hcd, tree)
-df.nn %>% group_by(cluster) %>% summarise(n = n(), mean = mean(price_m2)) %>% arrange(mean)  # check which number got assiged to which cluster
-cut.nn <- df.nn %>% 
-  filter(cluster %in% c(1, 2)) %>%  # filter out the first three submarkets
-  max() ; cut.nn
-
-# k-means clustering (~2sec)
-tic("k-means: ")
-  km <- kmeans(df9$price_m2, 7)
-  df.km <- cbind(df9$price_m2, km$cluster) %>% 
-    set_colnames(c("price_m2", "cluster")) %>% 
-    as.data.frame() %>%
-    arrange(price_m2)
-toc()
-df.km %>% group_by(cluster) %>% summarise(mean = mean(price_m2)) %>% arrange(mean)  # check which number got assigned to which cluster
-cut.kmeans <- df.km %>% 
-  filter(cluster %in% c(5,4,6,1)) %>%  # filter out the first three submarkets (cluster numbers randomly assigned - requires manaul selection)
-  max() ; cut.kmeans
-pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-kmeans-clustering.pdf")
-  plot(df9$price_m2, pch = 19, col = km$cluster, ylab = "Price per sqm", main = "K-means clustering")
-  plot(df.km$price_m2, pch = 19, col = df.km$cluster, ylab = "Price per sqm", main = "K-means clustering")
-  abline(h = cut.kmeans, col = "red")
-dev.off()
-
-# z-score
-pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-zscore-outliers.pdf")
-  plot(sort(scale(df9$price_m2)), ylab = "z-value", main = "z-Score outlier detection")
-  mu <- mean(df9$price_m2) ; sigma <- sd(df9$price_m2)
-  abline(h = (cut.kmeans - mu) / sigma, col = "red")
-dev.off()
-print(paste("z-value at cut-off:", round((cut.kmeans - mu) / sigma, 4)))  # cut off at 2x standard deviation
-
-# Visual inspection
-pdf("/Users/samu_hugo/Desktop/Code/Plots/plot-graphical-outlier-detection.pdf")
-  boxplot(df9$price_m2, main = "Box plot (price per sqm)")  # extreme outliers upwards
-  abline(h = cut.kmeans, col = "red")
-  hist(df9$price_m2, 
-       breaks = seq(min(df9$price_m2), max(df9$price_m2), length.out = 1000),
-       xlab = "Price per sqm",
-       main = "Histogram (price per sqm)",
-       col = "black")
-  abline(v = cut.kmeans, col = "red")
-  barplot(sort(df9$price_m2), main = "Barplot (Price per sqm, sorted)", ylab = "USD", xlab = "Price per sqm")
-  abline(h = cut.kmeans, col = "red")
-dev.off()
-
-# Create an sf object and change to a equidistant projection with metres as units
 sf.nyc <- df9 %>% 
-  filter(price_m2 < cut.kmeans) %>% 
-  st_as_sf(coords = c("long", "lat"), crs = 4326) %>% 
+  st_as_sf(coords = c("long", "lat"), crs = 4326) %>%
   st_transform(32118)
 
 # Import NYC boroughs and change to a equidistant projection with metres as units
@@ -302,7 +300,7 @@ df.sat %>%
 
 # Rename variables and filter out schools without quality indicators
 df.sat2 <- df.sat %>% 
-  select(id = DBN,
+  dplyr::select(id = DBN,
          school = `SCHOOL NAME`, 
          n = `Num of SAT Test Takers`, 
          reading = `SAT Critical Reading Avg. Score`, 
@@ -320,7 +318,7 @@ df.schools %>%
 
 # Select and rename the schools
 df.schools2 <- df.schools %>% 
-  select(id = `ATS SYSTEM CODE`,
+  dplyr::select(id = `ATS SYSTEM CODE`,
          location_string = `Location 1`,
          school_type = LOCATION_CATEGORY_DESCRIPTION)
 
@@ -332,7 +330,7 @@ sf.schools <- df.schools2 %>%
   filter(!is.na(X) & !is.na(Y)) %>% 
   st_as_sf(coords = c("Y", "X"), crs = 4326) %>% 
   st_transform(32118) %>% 
-  select(-c(location_string, coordinates))
+  dplyr::select(-c(location_string, coordinates))
 
 # Join SAT scores and schools data set
 sf.school_quality <- sf.schools %>% 
@@ -353,7 +351,7 @@ tic("Add school quality")
     rowMins(value = F)
   sf.nyc <- sf:::cbind.sf(sf.nyc, sf.school_quality[index, ] %>% 
                             as.data.frame() %>% 
-                            select(-c(id, geometry)))
+                            dplyr::select(-c(id, geometry)))
 toc()
 
 # Plot high schools only
@@ -512,7 +510,7 @@ dev.off()
 # Create an sf object
 df.air <- fread("/Users/samu_hugo/Desktop/Code/Data/air.csv") %>%
   filter(year_description == "2013" & geo_type_name == "Borough") %>% 
-  select(-indicator_data_id, -indicator_id) %>% 
+  dplyr::select(-indicator_data_id, -indicator_id) %>% 
   pivot_wider(names_from = name, values_from = data_valuemessage)
 
 sf.nyc$id <- 1:nrow(sf.nyc)
@@ -538,7 +536,7 @@ dev.off()
 
 # Join the air pollution data to the price data
 sf.nyc <- sf.nyc %>% 
-  left_join(df.air %>% select(measure = Measure, 
+  left_join(df.air %>% dplyr::select(measure = Measure, 
                               boro_id = geo_entity_id, 
                               borough = geo_entity_name,
                               NOx = `Boiler Emissions- Total NOx Emissions`,
